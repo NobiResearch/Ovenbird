@@ -509,12 +509,11 @@ def cache_get(name, max_age=None):
 
 
 def cache_put(name, payload, ts=None):
-    """Keep a payload; returns the blob, or None if it couldn't be written (a full disk, say)."""
     blob = {"ts": time.time() if ts is None else ts, "data": payload}
     try:
         save_json(home("cache", name + ".json"), blob)
     except OSError:
-        return None
+        pass
     return blob
 
 

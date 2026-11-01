@@ -198,11 +198,11 @@ def usable(latest):
 
 
 def last_look():
-    """The last look, {"ts", "latest"}, or None. A damaged file counts as no look, so the
-    next one writes it again."""
+    """The last look, {"ts", "latest"}, or None. A damaged file counts as no look, and so does
+    a date to come (a clock that was wrong), so the next one writes it again."""
     looks = [unrecorded] if unrecorded else []
     blob = core.cache_get("app-release")
-    if blob and isinstance(blob["data"], dict) and "latest" in blob["data"]:
+    if blob and blob["ts"] <= time.time() and isinstance(blob["data"], dict) and "latest" in blob["data"]:
         latest = blob["data"]["latest"]
         if latest is None or usable(latest):
             looks.append({"ts": blob["ts"], "latest": latest})
@@ -228,8 +228,9 @@ def latest_release():
         except Exception:  # offline, rate-limited, no release yet (404): ask again tomorrow
             pass
         unrecorded.clear()
-        if not core.cache_put("app-release", {"latest": latest}):
-            unrecorded.update(ts=time.time(), latest=latest)
+        blob = core.cache_put("app-release", {"latest": latest})
+        if (core.cache_get("app-release") or {}).get("ts") != blob["ts"]:
+            unrecorded.update(ts=blob["ts"], latest=latest)
         return latest
 
 
@@ -239,6 +240,8 @@ def fold_app():
     and pulse goes by it. With no results yet there's nothing to add to: Updates checks all of
     it when it opens. It runs on every status poll, so it only writes when the line changes."""
     try:
+        if LOOKING.locked():  # nothing waits for a look under way: the next poll brings it in
+            return
         fresh = check_app()
         cached = core.cache_get("updates")
         if fresh is None or not cached:
@@ -248,7 +251,7 @@ def fold_app():
             sources["app"] = fresh
             cached["data"]["total"] = sum(len(v["items"]) for v in sources.values())
             core.cache_put("updates", cached["data"], ts=cached["ts"])
-    except Exception:  # damaged results: they're served as they are, and Check now replaces them
+    except Exception:  # damaged results are served as they were
         pass
 
 

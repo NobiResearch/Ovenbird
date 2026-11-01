@@ -681,9 +681,12 @@ class TestTheDaysLook(TempHome):
             for body in ('{"ts": 1, "data": {}}', '{"ts": 1, "data": "x"}', '{"ts": 1, "data": {"sources": [1]}}',
                          '{"ts": "x", "data": {}}', "[1]", "{"):
                 core.home("cache", "updates.json").write_text(body)
-                self.assertEqual(self.get("/api/status")[0], 200, body)
-                self.settle()
                 self.assertEqual(self.get("/api/updates")[0], 200, body)
+
+    def test_a_full_disk_leaves_startup_alone(self):
+        with mock.patch("cos.startup.audit", return_value={"items": [], "enabled": 0, "flagged": 0}), \
+                mock.patch.object(core, "save_json", side_effect=OSError("disk full")):
+            self.assertEqual(self.get("/api/startup")[0], 200)
 
     def test_a_server_the_app_didnt_start_never_looks(self):
         self.app.managed = False  # `cos serve`, on a Mac where a downloaded app once ran

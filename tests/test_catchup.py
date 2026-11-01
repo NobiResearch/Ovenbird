@@ -613,7 +613,9 @@ class TestNewerApp(TempHome):
         for body in ("[1]", '"x"', "{", '{"ts": "x", "data": {"latest": null}}', '{"ts": null, "data": {}}',
                      '{"data": {"latest": null}}', '{"ts": %f}' % now, '{"ts": %f, "data": "x"}' % now,
                      '{"ts": %f, "data": {}}' % now, '{"ts": %f, "data": {"latest": "x"}}' % now,
-                     '{"ts": %f, "data": {"latest": {"version": "0.9.0", "url": "https://evil.example/"}}}' % now):
+                     '{"ts": %f, "data": {"latest": {"version": "0.9.0", "url": "https://evil.example/"}}}' % now,
+                     '{"ts": %f, "data": {"latest": null}}' % (now + 10 * 365 * 86400),
+                     '{"ts": 1e400, "data": {"latest": null}}'):
             core.home("cache", "app-release.json").write_text(body)
             with self.release() as asked:
                 self.assertEqual(updates.check_app()["items"][0]["latest"], "0.9.0", body)
@@ -635,6 +637,14 @@ class TestNewerApp(TempHome):
             core.cache_put("updates", data, ts=1000.0)
             updates.fold_app()
             self.assertEqual(core.cache_get("updates"), {"ts": 1000.0, "data": data})
+
+    def test_nothing_waits_for_a_look_under_way(self):
+        self.app()
+        with updates.LOOKING:
+            fold = threading.Thread(target=updates.fold_app, daemon=True)
+            fold.start()
+            fold.join(5)
+            self.assertFalse(fold.is_alive())
 
     def test_the_look_joins_old_results_without_freshening_them(self):
         self.app()
