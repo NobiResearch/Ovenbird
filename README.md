@@ -59,13 +59,19 @@ Ovenbird can see a lot of your Mac, so here's the deal in plain words.
   that changes your Mac, its settings or what Ovenbird remembers about you; they may still log
   friction, mark feeds read and refresh caches. The evolve run's `cos` is its own copy, so
   it's held instead by Claude Code's sandbox, its deny rules and the checks when it's merged.
-- **It doesn't rewrite itself behind your back.** The nightly evolve run works on a branch, in
-  a sandbox, and reaches your copy only when it's merged: by you, or by Claude after a guardian
-  agent's review (0020). **Keep Ovenbird up to date** (off until you confirm it in the app)
-  brings in what's merged on GitHub, and on this project's GitHub Claude merges its own pull
-  requests: once CI passes and a guardian agent has reviewed them, without a person reading them
-  first. Pull requests from anyone else wait for a person. Leave it off if you'd rather look at
-  each update first; Updates lists what's waiting.
+- **It doesn't rewrite itself behind your back.**
+  - **The downloaded app** changes only when you install a newer release. A quiet line in
+    Updates says when one is out, and opening the newer app moves Ovenbird's code to that
+    release. A person decides when a release goes out; it holds what was merged on GitHub up to
+    then, Claude's own pull requests included. Nothing else changes a downloaded copy: **Keep
+    Ovenbird up to date** and the nightly evolve run are only for copies run from source.
+  - **A copy run from source:** the nightly evolve run works on a branch, in a sandbox, and
+    reaches your copy only when it's merged: by you, or by Claude after a guardian agent's
+    review (0020). **Keep Ovenbird up to date** (off until you confirm it in the app) brings in
+    what's merged on GitHub, and on this project's GitHub Claude merges its own pull requests:
+    once CI passes and a guardian agent has reviewed them, without a person reading them first.
+    Pull requests from anyone else wait for a person. Leave it off if you'd rather look at each
+    update first; Updates lists what's waiting.
 
 ## The desktop
 
@@ -86,8 +92,9 @@ hotkey ⌃⌥Space) hosting a desktop with its own menu bar, dock and draggable 
 - **Journal**, **Memory**, **Settings**: background jobs, and **Permissions**: "Apple Music
   in Ovenbird" (MusicKit: catalog songs, your library, playlists and radio play right in
   Ovenbird), weather for a city or your location, your calendar and reminders (read-only),
-  notifications with Ovenbird's own name, and Keep Ovenbird up to date
-  (what's merged on GitHub comes to this Mac by itself). Everything is off until you turn it on.
+  notifications with Ovenbird's own name, and, in a copy run from source, Keep Ovenbird up to
+  date (what's merged on GitHub comes to this Mac by itself). Everything is off until you turn
+  it on.
 
 ⌘K opens the command palette: type an app name, or just ask. Prefer a browser?
 `cos serve --open` serves the same desktop on 127.0.0.1 with a per-launch token, and
