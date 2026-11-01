@@ -1,0 +1,1 @@
+- The README says plainly how each copy gets updates: the downloaded app changes only when you install a newer release, and Keep Ovenbird up to date and the nightly evolve run are only for copies run from source.
