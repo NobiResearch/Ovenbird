@@ -7,7 +7,7 @@ from unittest import mock
 
 from helpers import IN_SANDBOX, TempHome, local_connection, local_server
 
-from cos import chat, server
+from cos import chat, core, server, updates
 
 
 class TestRunFiles(unittest.TestCase):
@@ -567,3 +567,76 @@ class TestDemoMode(TempHome):
         finally:
             httpd.shutdown()
             httpd.server_close()
+
+
+class TestTheDaysLook(TempHome):
+    """A downloaded app looks for a newer one by itself (0015, step 6): on the desktop's status
+    poll and when Updates opens, and only the app's own server does."""
+
+    NEWER = {"version": "0.9.0", "url": "https://github.com/NobiResearch/Ovenbird/releases/tag/v0.9.0"}
+
+    def setUp(self):
+        super().setUp()
+        self.app = server.App("t")
+        self.app.port = 7357
+        self.app.managed = True
+        self.socket = os.path.join(self.tmp, "http.sock")
+        httpd = local_server(self.socket, server.make_handler(self.app))
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        self.downloaded(True)
+        core.cache_put("updates", {"sources": {"brew": {"items": [{"name": "git"}], "error": None}}, "total": 1,
+                                   "fetched": False, "missing_tools": []}, ts=1000.0)
+        collect = mock.patch("cos.status.collect", return_value={"signals": []})
+        collect.start()
+        self.addCleanup(collect.stop)
+
+    def downloaded(self, release):
+        core.save_json(core.home("state", "app.json"), {"release": release, "version": "0.8.0"})
+
+    def get(self, path):
+        conn = local_connection(self.socket)
+        conn.request("GET", path, headers={"Host": "127.0.0.1:7357", "X-COS-Token": "t"})
+        res = conn.getresponse()
+        data = json.loads(res.read())
+        conn.close()
+        return res.status, data
+
+    def test_updates_shows_the_look_on_results_of_any_age(self):
+        with mock.patch.object(updates, "latest_release", return_value=self.NEWER), \
+                mock.patch.object(updates, "check", side_effect=AssertionError("checked the whole Mac")):
+            status, blob = self.get("/api/updates")
+        self.assertEqual(status, 200)
+        self.assertEqual((blob["ts"], blob["data"]["total"]), (1000.0, 2))
+        self.assertEqual(blob["data"]["sources"]["app"]["items"][0]["latest"], "0.9.0")
+
+    def test_a_failed_look_changes_nothing_on_screen(self):
+        with mock.patch.object(core, "http_get", side_effect=OSError("offline")):
+            status, blob = self.get("/api/updates")
+        self.assertEqual(status, 200)
+        self.assertEqual((blob["ts"], blob["data"]["total"]), (1000.0, 1))
+        self.assertEqual(blob["data"]["sources"]["app"], {"items": [], "error": None})
+
+    def test_the_status_poll_looks_once_a_day_beside_the_window(self):
+        ran = threading.Event()
+        with mock.patch.object(updates, "fold_app", side_effect=ran.set) as fold:
+            self.assertEqual(self.get("/api/status")[0], 200)
+            self.assertTrue(ran.wait(5))
+            core.cache_put("app-release", {"latest": None})
+            self.assertEqual(self.get("/api/status")[0], 200)
+        self.assertEqual(fold.call_count, 1)
+
+    def test_a_server_the_app_didnt_start_never_looks(self):
+        self.app.managed = False  # `cos serve`, on a Mac where a downloaded app once ran
+        with mock.patch.object(updates, "fold_app") as fold:
+            self.assertEqual(self.get("/api/status")[0], 200)
+            self.assertEqual(self.get("/api/updates")[0], 200)
+        fold.assert_not_called()
+
+    def test_an_app_someone_built_never_asks(self):
+        self.downloaded(False)
+        with mock.patch.object(core, "http_get", side_effect=AssertionError("asked GitHub")) as asked:
+            self.assertEqual(self.get("/api/status")[0], 200)
+            self.assertEqual(self.get("/api/updates")[0], 200)
+        asked.assert_not_called()

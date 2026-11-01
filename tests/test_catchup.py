@@ -1,6 +1,8 @@
 import io
 import os
 import subprocess
+import threading
+import time
 import unittest
 from contextlib import redirect_stdout
 from unittest import mock
@@ -531,6 +533,15 @@ class TestNewerApp(TempHome):
     def app(self, **kw):
         core.save_json(core.home("state", "app.json"), dict({"release": True, "version": "0.8.0"}, **kw))
 
+    def results(self):
+        core.cache_put("updates", {"sources": {"brew": {"items": [{"name": "git"}], "error": None}}, "total": 1,
+                                   "fetched": False, "missing_tools": []}, ts=1000.0)
+
+    def yesterday(self):
+        path = core.home("cache", "app-release.json")
+        blob = core.load_json(path)
+        core.save_json(path, dict(blob, ts=blob["ts"] - updates.LOOK_EVERY - 1))
+
     def test_a_newer_release_is_one_quiet_line(self):
         self.app()
         with self.release():
@@ -555,10 +566,74 @@ class TestNewerApp(TempHome):
         with mock.patch.object(core, "http_get", side_effect=AssertionError("asked again")):
             self.assertEqual(updates.check_app()["items"], [])
 
+    def test_a_failed_look_keeps_what_the_last_one_found(self):
+        self.app()
+        with self.release():
+            updates.check_app()
+        self.yesterday()
+        with mock.patch.object(core, "http_get", side_effect=OSError("offline")) as asked:
+            self.assertEqual(updates.check_app()["items"][0]["latest"], "0.9.0")
+            self.assertEqual(updates.check_app()["items"][0]["latest"], "0.9.0")
+        self.assertEqual(asked.call_count, 1)
+
+    def test_two_looks_at_once_ask_once(self):
+        def slow(*a, **kw):
+            time.sleep(0.05)
+            raise OSError("offline")
+        with mock.patch.object(core, "http_get", side_effect=slow) as asked:
+            looks = [threading.Thread(target=updates.latest_release) for _ in range(4)]
+            for t in looks:
+                t.start()
+            for t in looks:
+                t.join()
+        self.assertEqual(asked.call_count, 1)
+
+    def test_a_look_is_due_once_a_day_whatever_the_answer(self):
+        self.app()
+        self.assertTrue(updates.look_due())
+        with mock.patch.object(core, "http_get", side_effect=OSError("offline")):
+            updates.latest_release()
+        self.assertFalse(updates.look_due())
+        self.yesterday()
+        self.assertTrue(updates.look_due())
+
+    def test_the_look_joins_old_results_without_freshening_them(self):
+        self.app()
+        self.results()
+        with self.release():
+            updates.fold_app()
+        blob = core.cache_get("updates")
+        self.assertEqual(blob["ts"], 1000.0)  # "checked 3 weeks ago" stays true, and pulse goes by it
+        self.assertEqual(blob["data"]["total"], 2)
+        self.assertEqual(blob["data"]["sources"]["app"]["items"][0]["latest"], "0.9.0")
+        self.assertEqual(blob["data"]["sources"]["brew"]["items"], [{"name": "git"}])
+
+    def test_the_line_leaves_with_the_new_app(self):
+        self.app()
+        self.results()
+        with self.release():
+            updates.fold_app()
+        self.app(version="0.9.0")
+        with mock.patch.object(core, "http_get", side_effect=AssertionError("asked twice in a day")):
+            updates.fold_app()
+        blob = core.cache_get("updates")
+        self.assertEqual((blob["data"]["total"], blob["data"]["sources"]["app"]["items"]), (1, []))
+
+    def test_no_results_yet_stay_none(self):
+        """Half a cache would read as "macOS: up to date" in Updates, which checks all of it instead."""
+        self.app()
+        with self.release():
+            updates.fold_app()
+        self.assertIsNone(core.cache_get("updates"))
+
     def test_an_app_someone_built_never_asks(self):
         self.app(release=False)
+        self.results()
         with mock.patch.object(core, "http_get", side_effect=AssertionError("asked GitHub")):
             self.assertIsNone(updates.check_app())
+            self.assertFalse(updates.look_due())
+            updates.fold_app()
+        self.assertNotIn("app", core.cache_get("updates")["data"]["sources"])
 
     def test_code_newer_than_its_app_says_download(self):
         from cos import status

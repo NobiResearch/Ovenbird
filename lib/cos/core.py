@@ -508,8 +508,8 @@ def cache_get(name, max_age=None):
     return blob
 
 
-def cache_put(name, payload):
-    blob = {"ts": time.time(), "data": payload}
+def cache_put(name, payload, ts=None):
+    blob = {"ts": time.time() if ts is None else ts, "data": payload}
     try:
         save_json(home("cache", name + ".json"), blob)
     except OSError:

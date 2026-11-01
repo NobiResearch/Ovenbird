@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import os
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from . import core
@@ -184,26 +185,51 @@ def check_claude_os():
 
 LATEST_RELEASE = "https://api.github.com/repos/%s/releases/latest" % core.REPOSITORY.split("/", 1)[1]
 RELEASE_PAGE = re.compile(r"https://github\.com/%s/releases/tag/[\w.-]+" % re.escape(core.REPOSITORY.split("/", 1)[1]), re.I)
+LOOK_EVERY = 86400
+LOOKING = threading.Lock()  # the desktop's status poll and the Updates window can arrive together
 
 
 def latest_release():
     """The newest Ovenbird.app on GitHub, {"version", "url"}, or None. One look a day at
-    most, whatever the answer (decision 0015, step 6)."""
-    cached = core.cache_get("app-release", max_age=86400)
-    if cached:
-        return cached["data"].get("latest")
-    latest = None
-    try:
-        with core.http_get(LATEST_RELEASE, headers={"Accept": "application/vnd.github+json"}, timeout=8) as r:
-            d = json.loads(r.read(500000))
-        tag, url = d.get("tag_name"), d.get("html_url")
-        version = tag[1:] if isinstance(tag, str) and tag.startswith("v") else tag
-        if core.version_tuple(version) and isinstance(url, str) and RELEASE_PAGE.fullmatch(url) and not d.get("draft"):
-            latest = {"version": version, "url": url}
-    except Exception:  # offline, rate-limited, no release yet (404): ask again tomorrow
-        pass
-    core.cache_put("app-release", {"latest": latest})
-    return latest
+    most, whatever the answer (decision 0015, step 6); one that finds nothing keeps what the
+    last one found, so a day offline doesn't take the line away."""
+    with LOOKING:
+        cached = core.cache_get("app-release", max_age=LOOK_EVERY)
+        if cached:
+            return cached["data"].get("latest")
+        latest = ((core.cache_get("app-release") or {}).get("data") or {}).get("latest")
+        try:
+            with core.http_get(LATEST_RELEASE, headers={"Accept": "application/vnd.github+json"}, timeout=8) as r:
+                d = json.loads(r.read(500000))
+            tag, url = d.get("tag_name"), d.get("html_url")
+            version = tag[1:] if isinstance(tag, str) and tag.startswith("v") else tag
+            if core.version_tuple(version) and isinstance(url, str) and RELEASE_PAGE.fullmatch(url) and not d.get("draft"):
+                latest = {"version": version, "url": url}
+        except Exception:  # offline, rate-limited, no release yet (404): ask again tomorrow
+            pass
+        core.cache_put("app-release", {"latest": latest})
+        return latest
+
+
+def look_due():
+    """Is today's look for a newer app still to come? Never for an app someone built."""
+    return bool(core.app_record().get("release")) and not core.cache_get("app-release", max_age=LOOK_EVERY)
+
+
+def fold_app():
+    """Put today's look into the cached results, which can be any age: without pulse nothing
+    else refreshes them. Their ts stays, since "checked" is about everything else on the Mac
+    and pulse goes by it. With no results yet there's nothing to add to: Updates checks all of
+    it when it opens."""
+    fresh = check_app()
+    cached = core.cache_get("updates")
+    if fresh is None or not cached:
+        return
+    sources = cached["data"]["sources"]
+    if sources.get("app") != fresh:
+        sources["app"] = fresh
+        cached["data"]["total"] = sum(len(v["items"]) for v in sources.values())
+        core.cache_put("updates", cached["data"], ts=cached["ts"])
 
 
 def check_app():
