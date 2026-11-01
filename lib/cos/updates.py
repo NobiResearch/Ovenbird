@@ -259,7 +259,7 @@ def fold_app():
 
 def newer_app(app, latest):
     """Updates' line for `latest`, if it's newer than this downloaded app, or None. Updates
-    and the signal both ask here, so they can't disagree."""
+    and the signal both ask here, so the rule can't drift between them."""
     have = core.version_tuple(app.get("version"))
     if not app.get("release") or not latest or not have or core.version_tuple(latest["version"]) <= have:
         return None
@@ -269,7 +269,7 @@ def newer_app(app, latest):
 def known_newer_app():
     """What the last look found, for status.signals (0026). They run on every poll, in the
     boot banner and in pulse, unguarded: so no network, no LOOKING, nothing written, and None
-    for anything unreadable. A copy with no release app reads no look at all."""
+    for anything unreadable. With no release app on record, it reads no look at all."""
     try:
         app = core.app_record()
         return newer_app(app, (last_look() or {}).get("latest")) if app.get("release") else None

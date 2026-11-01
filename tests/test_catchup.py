@@ -730,10 +730,12 @@ class TestNewerApp(TempHome):
 
     def test_the_name_stays_beside_the_count(self):
         """A count doesn't say one of them is what brings Ovenbird's own code."""
+        from cos import status
         self.app()
         self.looked()
         self.results()
         self.assertEqual(len(self.signal()), 1)
+        self.assertTrue(any("updates available" in m for _, m in status.signals(self.VITALS)), "and the count is there")
 
     def test_the_signal_never_makes_the_look(self):
         self.app()

@@ -40,14 +40,15 @@ One `note` in `status.signals`: `Ovenbird.app 0.9.0 is out: see Updates`.
   fills the results, and `pulse` does too. After that a count can't say that one of them is the
   update that brings Ovenbird's own code. So the app can be said twice, by name and in the count.
   That's honest, and it's one condition fewer.
-- **It stays until the newer app is opened.** No dismiss: the line is true, it ends by itself, and
-  a dismiss would be state that silences the only channel a safety fix has. It doesn't depend on
-  the welcome card.
+- **It stays until the newer app is opened.** No dismiss: the line is true, opening the newer app
+  ends it, and a dismiss would be state that silences the only channel a safety fix has. It doesn't
+  depend on the welcome card.
 - **It never makes the look.** `updates.known_newer_app` reads the last one and that's all: no
   network, no `LOOKING`, nothing written, because `signals` runs unguarded on every poll, in the
   boot banner and in `pulse`. A copy with no release app reads no look at all. Anything unreadable
   is no line and no exception.
-- **Updates and the signal can't disagree.** Both ask `updates.newer_app`.
+- **Updates and the signal keep one rule.** Both ask `updates.newer_app`, so what counts as a newer
+  app can't drift between them.
 - **The words are fixed.** Only the version comes from GitHub, and `core.version_tuple` now takes
   ASCII digits and bounded lengths only, since a version reaches Claude's boot banner. No URL and
   no release text go in a signal.
@@ -71,6 +72,10 @@ source, and a failed look stays quiet.
   it for up to 120.
 - **The line is one note among others.** It doesn't say a release matters more than another,
   because it doesn't know.
+- **It trusts `state/app.json`,** as `core.app_outdated` does. Someone who drags the app to the
+  Trash without Remove Ovenbird…, keeps `~/.claude-os` and goes on using `cos` keeps the line, with
+  no dismiss. Checking that the app is still there would add a way for the line to go silent for
+  the people it's for, which is the worse failure, so it stays as it is.
 
 ## Not now
 
