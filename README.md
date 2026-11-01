@@ -55,7 +55,7 @@ Ovenbird can see a lot of your Mac, so here's the deal in plain words.
   checks reach the services they name.
 - **Background jobs are yours to start.** Installing from source starts only `pulse`, which uses
   no AI and takes a few seconds every two hours; in the downloaded app it's a box at first launch,
-  off until you tick it. The morning brief, the nightly evolve run and the board
+  off until you tick it, and a switch named `pulse` in Settings. The morning brief, the nightly evolve run and the board
   are off until you turn them on. In the morning and board runs, `cos` refuses every command
   that changes your Mac, its settings or what Ovenbird remembers about you; they may still log
   friction, mark feeds read and refresh caches. The evolve run's `cos` is its own copy, so
@@ -63,7 +63,8 @@ Ovenbird can see a lot of your Mac, so here's the deal in plain words.
 - **It doesn't rewrite itself behind your back.**
   - **The downloaded app** changes only when you install a newer release. To see if one is
     out, press **Check now** in Updates; with the two-hourly check on, it looks by itself.
-    Opening the newer app moves Ovenbird's code to that release. A person decides when a release
+    Either way it asks GitHub at most once a day. Opening the newer app moves Ovenbird's code to
+    that release. A person decides when a release
     goes out, and it holds what was merged on GitHub up to then, including Claude's own pull
     requests, which merge without a person reading them first. Nothing else changes a downloaded
     copy by itself: **Keep Ovenbird up to date** and the nightly evolve run are only for copies
