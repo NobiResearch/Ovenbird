@@ -499,17 +499,17 @@ def save_json(path, data):
 
 
 def cache_get(name, max_age=None):
-    """Return cached payload, or None if missing/stale."""
+    """Return cached payload, or None if missing/stale/damaged."""
     blob = load_json(home("cache", name + ".json"))
-    if not blob:
+    if not isinstance(blob, dict) or "data" not in blob or not isinstance(blob.get("ts"), (int, float)):
         return None
-    if max_age is not None and time.time() - blob.get("ts", 0) > max_age:
+    if max_age is not None and time.time() - blob["ts"] > max_age:
         return None
     return blob
 
 
-def cache_put(name, payload):
-    blob = {"ts": time.time(), "data": payload}
+def cache_put(name, payload, ts=None):
+    blob = {"ts": time.time() if ts is None else ts, "data": payload}
     try:
         save_json(home("cache", name + ".json"), blob)
     except OSError:

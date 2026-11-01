@@ -475,9 +475,11 @@ def make_handler(app):
         h._json({"version": __version__, "lines": captured(shell.boot).splitlines()})
 
     def r_status(h, q, b):
-        from . import status
+        from . import status, updates
         s = status.collect()
         core.cache_put("status", s)
+        if app.managed:  # beside the poll: a slow network doesn't hold it up
+            threading.Thread(target=updates.fold_app, daemon=True).start()
         h._json(dict(s, claude_os=code_state(app), new_here=core.new_here(), downloaded=core.downloaded()))
 
     def r_restart(h, q, b):
@@ -524,6 +526,9 @@ def make_handler(app):
         if q.get("check") or not cached:
             data = updates.check(fetch=bool(q.get("fetch")))
             return h._json({"ts": time.time(), "data": data})
+        if app.managed:
+            updates.fold_app()
+            cached = core.cache_get("updates") or cached
         h._json(cached)
 
     def r_updates_apply(h, q, b):

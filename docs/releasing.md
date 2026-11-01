@@ -129,8 +129,9 @@ Anthropic's page), and Ovenbird itself, downloaded from this repository into
 skills in Claude Code and a vitals check every 2 hours, start off. Ovenbird never asks for Full
 Disk Access, Accessibility or Screen Recording.
 
-**Updates:** when a newer Ovenbird.app is out, Updates says so. Download it, replace the old one
-and open it: Ovenbird comes along.
+**Updates:** while it's open, Ovenbird asks GitHub for a newer Ovenbird.app at most once a day,
+and Updates says so when there is one. Download it, replace the old one and open it: Ovenbird
+comes along.
 
 **Remove:** Ovenbird menu › Remove Ovenbird… turns off its background jobs, removes its links
 and moves its code to the Trash; your journal and memory go only if you say so. Then drag the app

@@ -1,0 +1,1 @@
+- A downloaded Ovenbird.app now looks for a newer release by itself, at most once a day while it's open, so Updates can say so without anyone pressing Check now. It's still one quiet line: no dialog and no notification, it installs nothing, and a look that fails changes nothing. An app built from source never asks.

@@ -7,7 +7,7 @@ from unittest import mock
 
 from helpers import IN_SANDBOX, TempHome, local_connection, local_server
 
-from cos import chat, server
+from cos import chat, core, server, updates
 
 
 class TestRunFiles(unittest.TestCase):
@@ -567,3 +567,139 @@ class TestDemoMode(TempHome):
         finally:
             httpd.shutdown()
             httpd.server_close()
+
+
+class TestTheDaysLook(TempHome):
+    """A downloaded app looks for a newer one by itself (0015, step 6): on the desktop's status
+    poll and when Updates opens, and only the app's own server does."""
+
+    NEWER = {"version": "0.9.0", "url": "https://github.com/NobiResearch/Ovenbird/releases/tag/v0.9.0"}
+
+    def setUp(self):
+        super().setUp()
+        self.app = server.App("t")
+        self.app.port = 7357
+        self.app.managed = True
+        self.socket = os.path.join(self.tmp, "http.sock")
+        httpd = local_server(self.socket, server.make_handler(self.app))
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        self.downloaded(True)
+        core.cache_put("updates", {"sources": {"brew": {"items": [{"name": "git"}], "error": None}}, "total": 1,
+                                   "fetched": False, "missing_tools": []}, ts=1000.0)
+        collect = mock.patch("cos.status.collect", return_value={"signals": []})
+        collect.start()
+        self.addCleanup(collect.stop)
+        self.addCleanup(updates.unrecorded.clear)
+        self.threads = threading.active_count()
+
+    def downloaded(self, release):
+        core.save_json(core.home("state", "app.json"), {"release": release, "version": "0.8.0"})
+
+    def settle(self):
+        """Wait for the looks the polls started."""
+        deadline = time.time() + 5
+        while threading.active_count() > self.threads and time.time() < deadline:
+            time.sleep(0.01)
+
+    def get(self, path):
+        conn = local_connection(self.socket)
+        conn.request("GET", path, headers={"Host": "127.0.0.1:7357", "X-COS-Token": "t"})
+        res = conn.getresponse()
+        data = json.loads(res.read())
+        conn.close()
+        return res.status, data
+
+    def test_updates_shows_the_look_on_results_of_any_age(self):
+        with mock.patch.object(updates, "latest_release", return_value=self.NEWER), \
+                mock.patch.object(updates, "check", side_effect=AssertionError("checked the whole Mac")):
+            status, blob = self.get("/api/updates")
+        self.assertEqual(status, 200)
+        self.assertEqual((blob["ts"], blob["data"]["total"]), (1000.0, 2))
+        self.assertEqual(blob["data"]["sources"]["app"]["items"][0]["latest"], "0.9.0")
+
+    def test_a_failed_look_changes_nothing_on_screen(self):
+        with mock.patch.object(core, "http_get", side_effect=OSError("offline")):
+            status, blob = self.get("/api/updates")
+        self.assertEqual(status, 200)
+        self.assertEqual((blob["ts"], blob["data"]["total"]), (1000.0, 1))
+        self.assertEqual(blob["data"]["sources"]["app"], {"items": [], "error": None})
+
+    def test_the_status_poll_doesnt_wait_for_the_look(self):
+        finish, done = threading.Event(), threading.Event()
+
+        def look():
+            finish.wait(5)
+            done.set()
+        with mock.patch.object(updates, "fold_app", side_effect=look):
+            self.assertEqual(self.get("/api/status")[0], 200)
+            self.assertFalse(done.is_set())
+            finish.set()
+            self.assertTrue(done.wait(5))
+
+    def test_the_status_poll_asks_once_a_day(self):
+        with mock.patch.object(core, "http_get", side_effect=OSError("offline")) as asked:
+            for _ in range(3):
+                self.assertEqual(self.get("/api/status")[0], 200)
+            self.settle()
+        self.assertEqual(asked.call_count, 1)
+
+    def test_the_status_poll_asks_once_a_day_on_a_full_disk(self):
+        with mock.patch.object(core, "save_json", side_effect=OSError("disk full")), \
+                mock.patch.object(core, "http_get", side_effect=OSError("offline")) as asked:
+            for _ in range(3):
+                self.assertEqual(self.get("/api/status")[0], 200)
+            self.settle()
+        self.assertEqual(asked.call_count, 1)
+
+    def test_the_count_follows_the_app_on_the_next_poll(self):
+        core.cache_put("app-release", {"latest": self.NEWER})  # today's look is done: only the app changes
+        with mock.patch.object(core, "http_get") as asked:
+            self.get("/api/status")
+            self.settle()
+            self.assertEqual(core.cache_get("updates")["data"]["total"], 2)
+            core.save_json(core.home("state", "app.json"), {"release": True, "version": "0.9.0"})
+            self.get("/api/status")
+            self.settle()
+        asked.assert_not_called()
+        self.assertEqual(core.cache_get("updates")["data"]["total"], 1)
+
+    def test_a_damaged_record_of_the_look_changes_nothing_on_screen(self):
+        for body in ("[1]", '"x"', "{", '{"ts": "x", "data": {}}', '{"ts": null}', '{"ts": 1, "data": {"latest": "x"}}'):
+            core.home("cache", "app-release.json").write_text(body)
+            with mock.patch.object(core, "http_get", side_effect=OSError("offline")):
+                self.assertEqual(self.get("/api/status")[0], 200, body)
+                self.settle()
+                self.assertEqual(self.get("/api/updates")[0], 200, body)
+            self.assertIsNone(core.load_json(core.home("cache", "app-release.json"))["data"]["latest"], body)
+
+    def test_damaged_results_are_served_or_checked_again(self):
+        core.cache_put("app-release", {"latest": self.NEWER})
+        fresh = {"sources": {}, "total": 0, "fetched": False, "missing_tools": []}
+        with mock.patch.object(updates, "check", return_value=fresh):
+            for body in ('{"ts": 1, "data": {}}', '{"ts": 1, "data": "x"}', '{"ts": 1, "data": {"sources": [1]}}',
+                         '{"ts": "x", "data": {}}', "[1]", "{"):
+                core.home("cache", "updates.json").write_text(body)
+                self.assertEqual(self.get("/api/updates")[0], 200, body)
+
+    def test_a_full_disk_leaves_startup_alone(self):
+        with mock.patch("cos.startup.audit", return_value={"items": [], "enabled": 0, "flagged": 0}), \
+                mock.patch.object(core, "save_json", side_effect=OSError("disk full")):
+            self.assertEqual(self.get("/api/startup")[0], 200)
+
+    def test_a_server_the_app_didnt_start_never_looks(self):
+        self.app.managed = False  # `cos serve`, on a Mac where a downloaded app once ran
+        with mock.patch.object(updates, "fold_app") as fold:
+            self.assertEqual(self.get("/api/status")[0], 200)
+            self.assertEqual(self.get("/api/updates")[0], 200)
+            self.settle()
+        fold.assert_not_called()
+
+    def test_an_app_someone_built_never_asks(self):
+        self.downloaded(False)
+        with mock.patch.object(core, "http_get") as asked:
+            self.assertEqual(self.get("/api/status")[0], 200)
+            self.assertEqual(self.get("/api/updates")[0], 200)
+            self.settle()
+        asked.assert_not_called()

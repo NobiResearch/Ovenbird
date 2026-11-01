@@ -4,6 +4,8 @@ import datetime as dt
 import json
 import os
 import re
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import core
@@ -184,26 +186,73 @@ def check_claude_os():
 
 LATEST_RELEASE = "https://api.github.com/repos/%s/releases/latest" % core.REPOSITORY.split("/", 1)[1]
 RELEASE_PAGE = re.compile(r"https://github\.com/%s/releases/tag/[\w.-]+" % re.escape(core.REPOSITORY.split("/", 1)[1]), re.I)
+LOOK_EVERY = 86400
+LOOKING = threading.Lock()  # the desktop's status poll and the Updates window can arrive together
+unrecorded = {}  # a look the cache couldn't keep (a full disk): the polls mustn't ask again each minute
+
+
+def usable(latest):
+    """Is this a release we'd link to?"""
+    return (isinstance(latest, dict) and core.version_tuple(latest.get("version"))
+            and isinstance(latest.get("url"), str) and RELEASE_PAGE.fullmatch(latest["url"]))
+
+
+def last_look():
+    """The last look, {"ts", "latest"}, or None. A damaged file counts as no look, and so does
+    a date to come (a clock that was wrong), so the next one writes it again."""
+    looks = [unrecorded] if unrecorded else []
+    blob = core.cache_get("app-release")
+    if blob and blob["ts"] <= time.time() and isinstance(blob["data"], dict) and "latest" in blob["data"]:
+        latest = blob["data"]["latest"]
+        if latest is None or usable(latest):
+            looks.append({"ts": blob["ts"], "latest": latest})
+    return max(looks, key=lambda look: look["ts"], default=None)
 
 
 def latest_release():
     """The newest Ovenbird.app on GitHub, {"version", "url"}, or None. One look a day at
-    most, whatever the answer (decision 0015, step 6)."""
-    cached = core.cache_get("app-release", max_age=86400)
-    if cached:
-        return cached["data"].get("latest")
-    latest = None
+    most, whatever the answer (decision 0015, step 6); one that finds nothing keeps what the
+    last one found, so a day offline doesn't take the line away."""
+    with LOOKING:
+        look = last_look()
+        if look and time.time() - look["ts"] <= LOOK_EVERY:
+            return look["latest"]
+        latest = look["latest"] if look else None
+        try:
+            with core.http_get(LATEST_RELEASE, headers={"Accept": "application/vnd.github+json"}, timeout=8) as r:
+                d = json.loads(r.read(500000))
+            tag = d.get("tag_name")
+            found = {"version": tag[1:] if isinstance(tag, str) and tag.startswith("v") else tag, "url": d.get("html_url")}
+            if usable(found) and not d.get("draft"):
+                latest = found
+        except Exception:  # offline, rate-limited, no release yet (404): ask again tomorrow
+            pass
+        unrecorded.clear()
+        blob = core.cache_put("app-release", {"latest": latest})
+        if (core.cache_get("app-release") or {}).get("ts") != blob["ts"]:
+            unrecorded.update(ts=blob["ts"], latest=latest)
+        return latest
+
+
+def fold_app():
+    """Put today's look into the cached results, which can be any age: without pulse nothing
+    else refreshes them. Their ts stays, since "checked" is about everything else on the Mac
+    and pulse goes by it. With no results yet there's nothing to add to: Updates checks all of
+    it when it opens. It runs on every status poll, so it only writes when the line changes."""
     try:
-        with core.http_get(LATEST_RELEASE, headers={"Accept": "application/vnd.github+json"}, timeout=8) as r:
-            d = json.loads(r.read(500000))
-        tag, url = d.get("tag_name"), d.get("html_url")
-        version = tag[1:] if isinstance(tag, str) and tag.startswith("v") else tag
-        if core.version_tuple(version) and isinstance(url, str) and RELEASE_PAGE.fullmatch(url) and not d.get("draft"):
-            latest = {"version": version, "url": url}
-    except Exception:  # offline, rate-limited, no release yet (404): ask again tomorrow
+        if LOOKING.locked():  # nothing waits for a look under way: the next poll brings it in
+            return
+        fresh = check_app()
+        cached = core.cache_get("updates")
+        if fresh is None or not cached:
+            return
+        sources = cached["data"]["sources"]
+        if sources.get("app") != fresh:
+            sources["app"] = fresh
+            cached["data"]["total"] = sum(len(v["items"]) for v in sources.values())
+            core.cache_put("updates", cached["data"], ts=cached["ts"])
+    except Exception:  # damaged results are served as they were
         pass
-    core.cache_put("app-release", {"latest": latest})
-    return latest
 
 
 def check_app():
