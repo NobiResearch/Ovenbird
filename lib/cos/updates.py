@@ -200,7 +200,8 @@ def usable(latest):
 def last_look():
     """The last look, {"ts", "latest"}, or None. A damaged file counts as no look, and so does
     a date to come (a clock that was wrong), so the next one writes it again."""
-    looks = [unrecorded] if unrecorded else []
+    kept = dict(unrecorded)  # a copy: signals read this without LOOKING, and a look can clear it
+    looks = [kept] if kept else []
     blob = core.cache_get("app-release")
     if blob and blob["ts"] <= time.time() and isinstance(blob["data"], dict) and "latest" in blob["data"]:
         latest = blob["data"]["latest"]
@@ -237,8 +238,9 @@ def latest_release():
 def fold_app():
     """Put today's look into the cached results, which can be any age: without pulse nothing
     else refreshes them. Their ts stays, since "checked" is about everything else on the Mac
-    and pulse goes by it. With no results yet there's nothing to add to: Updates checks all of
-    it when it opens. It runs on every status poll, so it only writes when the line changes."""
+    and pulse goes by it. With no results yet there's nothing to add to: the signal says so
+    (known_newer_app), and Updates checks all of it when it opens. It runs on every status
+    poll, so it only writes when the line changes."""
     try:
         if LOOKING.locked():  # nothing waits for a look under way: the next poll brings it in
             return
@@ -255,17 +257,34 @@ def fold_app():
         pass
 
 
+def newer_app(app, latest):
+    """Updates' line for `latest`, if it's newer than this downloaded app, or None. Updates
+    and the signal both ask here, so the rule can't drift between them."""
+    have = core.version_tuple(app.get("version"))
+    if not app.get("release") or not latest or not have or core.version_tuple(latest["version"]) <= have:
+        return None
+    return {"name": "Ovenbird.app", "installed": app["version"], "latest": latest["version"], "url": latest["url"]}
+
+
+def known_newer_app():
+    """What the last look found, for status.signals (0026). They run on every poll, in the
+    boot banner and in pulse, unguarded: so no network, no LOOKING, nothing written, and None
+    for anything unreadable. With no release app on record, it reads no look at all."""
+    try:
+        app = core.app_record()
+        return newer_app(app, (last_look() or {}).get("latest")) if app.get("release") else None
+    except Exception:
+        return None
+
+
 def check_app():
     """A newer Ovenbird.app, for a downloaded one: it never replaces itself (0015), so it
     says so here, quietly. None for an app someone built themselves."""
     app = core.app_record()
     if not app.get("release"):
         return None
-    latest, have = latest_release(), core.version_tuple(app.get("version"))
-    if not latest or not have or core.version_tuple(latest["version"]) <= have:
-        return {"items": [], "error": None}
-    return {"items": [{"name": "Ovenbird.app", "installed": app["version"], "latest": latest["version"],
-                       "url": latest["url"]}], "error": None}
+    item = newer_app(app, latest_release())
+    return {"items": [item] if item else [], "error": None}
 
 
 def check(fetch=False):

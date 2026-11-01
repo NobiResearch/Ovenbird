@@ -58,7 +58,7 @@ profile for one registered Mac.
    - It never asks for Full Disk Access, Accessibility or Screen Recording.
 6. **Updates.**
    - No Sparkle and no app that replaces itself.
-   - The app only says a newer release exists: a quiet line in Updates, at most once a day.
+   - The app only says a newer release exists: a quiet line in Updates, at most once a day. (0026 adds one line among the signals.)
    - Keep up to date stays off by default. Downloaded copies follow the releases the human cuts, not raw main. If they ever follow main, the switch's dialog says plainly that Claude merges some changes without a human's review.
    - Python that gets ahead of an older app says "download Claude OS.app X" instead of breaking.
 7. **Publishing.**
@@ -123,7 +123,8 @@ notifications and Music automation).
   for checkouts that follow main, so a download doesn't show them.
 - **A newer app is one quiet line.** For a downloaded app, Updates asks GitHub for the latest
   release at most once a day (whatever the answer, offline included) and, if it's newer,
-  shows a card with a link to its release page. An app someone built never asks.
+  shows a card with a link to its release page. An app someone built never asks. Since 0026 the
+  signals say so too, from the same look.
 - **Code newer than its app says so.** `core.APP_NEEDED` is the oldest app the code works
   with; a downloaded app older than that gets a warning signal with the download link.
 - **A download's main takes no local commits**, or the next app couldn't bring its code: `cos

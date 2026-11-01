@@ -193,7 +193,7 @@ def signals(s):
         a = weather.as_of(wx["data"] or {}).get("alert") or {}
         if a.get("msg"):
             out.append((a["level"], a["msg"][0].upper() + a["msg"][1:]))
-    from . import evolve
+    from . import evolve, updates
     stuck = evolve.follow_problem()
     if stuck:
         out.append(("warn", "Ovenbird's code couldn't follow its app: %s" % stuck))
@@ -201,6 +201,9 @@ def signals(s):
     if older:
         out.append(("warn", "this Ovenbird needs Ovenbird.app %s or newer (this one is %s): download it from %s"
                     % (older["needed"], older["have"], core.RELEASES)))
+    newer = None if older else updates.known_newer_app()
+    if newer:  # always a note: pulse turns a warn into a notification, and this never is one (0026)
+        out.append(("note", "Ovenbird.app %s is out: see Updates" % newer["latest"]))
     upd = core.cache_get("updates")
     if upd:
         n = upd["data"].get("total", 0)

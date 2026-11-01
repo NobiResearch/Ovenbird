@@ -130,8 +130,8 @@ skills in Claude Code and a vitals check every 2 hours, start off. Ovenbird neve
 Disk Access, Accessibility or Screen Recording.
 
 **Updates:** while it's open, Ovenbird asks GitHub for a newer Ovenbird.app at most once a day,
-and Updates says so when there is one. Download it, replace the old one and open it: Ovenbird
-comes along.
+and Today and Updates say so when there is one. Download it, replace the old one and open it:
+Ovenbird comes along.
 
 **Remove:** Ovenbird menu › Remove Ovenbird… turns off its background jobs, removes its links
 and moves its code to the Trash; your journal and memory go only if you say so. Then drag the app

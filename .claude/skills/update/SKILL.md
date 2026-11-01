@@ -28,5 +28,8 @@ description: Keep macOS and the software installed on this Mac up to date: macOS
 ## Rules
 
 - Long upgrades can take many minutes; tell the human before starting a big batch.
+- A newer Ovenbird.app has no `cos update apply`: give the link `cos update` shows and the three
+  steps (download it, replace the one in Applications, open it). Never update a downloaded
+  Ovenbird with git: its code comes with the app.
 - If an upgrade fails, show the last lines of output and log friction if it looks like
   something Ovenbird should handle better.
