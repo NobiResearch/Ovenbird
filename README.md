@@ -62,10 +62,12 @@ Ovenbird can see a lot of your Mac, so here's the deal in plain words.
   it's held instead by Claude Code's sandbox, its deny rules and the checks when it's merged.
 - **It doesn't rewrite itself behind your back.**
   - **The downloaded app** changes only when you install a newer release. While it's open, it
-    asks GitHub for one by itself, and Updates shows a line when one is out. (0.8.0 doesn't ask
-    by itself: press **Check now** in Updates, or turn on the two-hourly check.) Either way it
-    asks at most once a day, even if that look fails, so the line can take a day or more to
-    appear. Opening the newer app moves Ovenbird's code to that release. A person decides when a
+    asks GitHub for one by itself. When one is out, Updates shows it, and a quiet line says so
+    on Today and among the signals until you open the newer app, even if you've never opened
+    Updates. (0.8.0 doesn't ask by itself and never shows that line: press **Check now** in
+    Updates, or turn on the two-hourly check.) Either way it asks at most once a day, even if
+    that look fails, so the line can take a day or more to appear. Opening the newer app moves
+    Ovenbird's code to that release. A person decides when a
     release goes out, and it holds what was merged on GitHub up to then, including Claude's own
     pull requests, which merge without a person reading them first. Nothing else changes a
     downloaded copy by itself: **Keep Ovenbird up to date** and the nightly evolve run are only

@@ -631,8 +631,10 @@ def app_record():
 
 
 def version_tuple(v):
-    """'0.8.1' -> (0, 8, 1); None for anything else."""
-    return tuple(int(p) for p in v.split(".")) if isinstance(v, str) and re.fullmatch(r"\d+(\.\d+){0,3}", v) else None
+    """'0.8.1' -> (0, 8, 1); None for anything else. A parsed version reaches the boot banner
+    (0026), so \\d won't do: it takes any script's digits, and any length."""
+    return (tuple(int(p) for p in v.split(".")) if isinstance(v, str)
+            and re.fullmatch(r"[0-9]{1,9}(\.[0-9]{1,9}){0,3}", v) else None)
 
 
 def app_outdated():

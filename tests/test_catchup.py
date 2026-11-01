@@ -518,6 +518,9 @@ class TestNewerApp(TempHome):
     """A downloaded app says when a newer one is out, at most one look a day; one someone
     built never asks GitHub."""
 
+    NEWER = {"version": "0.9.0", "url": "https://github.com/NobiResearch/Ovenbird/releases/tag/v0.9.0"}
+    VITALS = {"disk": {"free": 10 ** 12, "free_pct": 50}, "memory": {"swap_used": 0}, "security": {}, "uptime": 0}
+
     def release(self, tag="v0.9.0", url="https://github.com/NobiResearch/Ovenbird/releases/tag/v0.9.0", **kw):
         body = dict({"tag_name": tag, "html_url": url, "draft": False}, **kw)
 
@@ -541,6 +544,22 @@ class TestNewerApp(TempHome):
         path = core.home("cache", "app-release.json")
         blob = core.load_json(path)
         core.save_json(path, dict(blob, ts=blob["ts"] - updates.LOOK_EVERY - 1))
+
+    def looked(self, **latest):
+        core.cache_put("app-release", {"latest": dict(self.NEWER, **latest)})
+
+    def signal(self):
+        from cos import status
+        return [s for s in status.signals(self.VITALS) if "is out" in s[1]]
+
+    def damaged_looks(self):
+        now = time.time()
+        return ("[1]", '"x"', "{", '{"ts": "x", "data": {"latest": null}}', '{"ts": null, "data": {}}',
+                '{"data": {"latest": null}}', '{"ts": %f}' % now, '{"ts": %f, "data": "x"}' % now,
+                '{"ts": %f, "data": {}}' % now, '{"ts": %f, "data": {"latest": "x"}}' % now,
+                '{"ts": %f, "data": {"latest": {"version": "0.9.0", "url": "https://evil.example/"}}}' % now,
+                '{"ts": %f, "data": {"latest": null}}' % (now + 10 * 365 * 86400),
+                '{"ts": 1e400, "data": {"latest": null}}')
 
     def test_a_newer_release_is_one_quiet_line(self):
         self.app()
@@ -609,13 +628,7 @@ class TestNewerApp(TempHome):
 
     def test_a_damaged_record_counts_as_no_look(self):
         self.app()
-        now = time.time()
-        for body in ("[1]", '"x"', "{", '{"ts": "x", "data": {"latest": null}}', '{"ts": null, "data": {}}',
-                     '{"data": {"latest": null}}', '{"ts": %f}' % now, '{"ts": %f, "data": "x"}' % now,
-                     '{"ts": %f, "data": {}}' % now, '{"ts": %f, "data": {"latest": "x"}}' % now,
-                     '{"ts": %f, "data": {"latest": {"version": "0.9.0", "url": "https://evil.example/"}}}' % now,
-                     '{"ts": %f, "data": {"latest": null}}' % (now + 10 * 365 * 86400),
-                     '{"ts": 1e400, "data": {"latest": null}}'):
+        for body in self.damaged_looks():
             core.home("cache", "app-release.json").write_text(body)
             with self.release() as asked:
                 self.assertEqual(updates.check_app()["items"][0]["latest"], "0.9.0", body)
@@ -704,9 +717,137 @@ class TestNewerApp(TempHome):
         self.app(release=False, version="0.1.0")
         self.assertIsNone(core.app_outdated(), "someone's own build")
         self.app(version="0.6.0")
-        fake = {"disk": {"free": 10 ** 12, "free_pct": 50}, "memory": {"swap_used": 0}, "security": {}, "uptime": 0}
-        msgs = [m for _, m in status.signals(fake)]
+        msgs = [m for _, m in status.signals(self.VITALS)]
         self.assertTrue(any("needs Ovenbird.app" in m and core.RELEASES in m for m in msgs), msgs)
+
+    # The signal (decision 0026): for someone who never opens Updates.
+
+    def test_someone_who_never_opened_updates_hears_of_it(self):
+        self.app()
+        self.looked()
+        self.assertIsNone(core.cache_get("updates"))
+        self.assertEqual(self.signal(), [("note", "Ovenbird.app 0.9.0 is out: see Updates")], "a note, never a warning")
+
+    def test_the_name_stays_beside_the_count(self):
+        """A count doesn't say one of them is what brings Ovenbird's own code."""
+        self.app()
+        self.looked()
+        self.results()
+        self.assertEqual(len(self.signal()), 1)
+
+    def test_the_signal_never_makes_the_look(self):
+        self.app()
+        self.looked()
+        self.yesterday()  # one is due, and it's the status poll's to make
+        with mock.patch.object(core, "http_get") as asked:
+            self.assertEqual(len(self.signal()), 1)
+        asked.assert_not_called()
+
+    def test_the_signal_doesnt_wait_for_a_look_under_way(self):
+        self.app()
+        self.looked()
+        heard = []
+        with updates.LOOKING:
+            read = threading.Thread(target=lambda: heard.extend(self.signal()), daemon=True)
+            read.start()
+            read.join(5)
+            self.assertFalse(read.is_alive())
+        self.assertEqual(len(heard), 1)
+
+    def test_the_signal_writes_nothing(self):
+        self.app()
+        self.looked()
+        with mock.patch.object(core, "save_json") as save, mock.patch.object(core, "journal") as journal:
+            self.assertEqual(len(self.signal()), 1)
+        save.assert_not_called()
+        journal.assert_not_called()
+
+    def test_no_look_or_a_failed_one_says_nothing(self):
+        self.app()
+        self.assertEqual(self.signal(), [])
+        with mock.patch.object(core, "http_get", side_effect=OSError("offline")):
+            updates.latest_release()
+        self.assertEqual(self.signal(), [])
+
+    def test_a_failed_look_keeps_the_line(self):
+        self.app()
+        self.looked()
+        self.yesterday()
+        with mock.patch.object(core, "http_get", side_effect=OSError("offline")):
+            updates.latest_release()
+        self.assertEqual(len(self.signal()), 1)
+
+    def test_the_signal_and_updates_agree(self):
+        self.looked()
+        for version in ("0.8.0", "0.9.0", "0.9.1", "x", None):
+            self.app(version=version)
+            self.assertEqual(len(self.signal()), len(updates.check_app()["items"]), version)
+
+    def test_the_signal_leaves_with_the_new_app(self):
+        self.app()
+        self.looked()
+        self.assertEqual(len(self.signal()), 1)
+        self.app(version="0.9.0")
+        with mock.patch.object(core, "http_get") as asked:
+            self.assertEqual(self.signal(), [])
+        asked.assert_not_called()
+
+    def test_a_copy_without_a_release_app_reads_no_look(self):
+        self.looked()  # from a release app that someone's own build replaced
+        for setup in (lambda: None, lambda: self.app(release=False, version="0.1.0")):
+            setup()
+            with mock.patch.object(updates, "last_look") as read:
+                self.assertEqual(self.signal(), [])
+            read.assert_not_called()
+        self.assertIsNone(updates.newer_app({"version": "0.1.0"}, self.NEWER), "the rule says so too")
+
+    def test_an_app_too_old_for_its_code_is_said_once(self):
+        self.app(version="0.6.0")
+        self.looked()
+        self.assertEqual(self.signal(), [], "the warning already says to download it")
+
+    def test_damage_is_no_line_and_no_exception(self):
+        """signals() has no guard around it: one exception and every poll fails."""
+        self.app()
+        for body in self.damaged_looks():
+            core.home("cache", "app-release.json").write_text(body)
+            self.assertEqual(self.signal(), [], body)
+        self.looked()
+        for body in ("[1]", "{", '{"release": true}', '{"release": true, "version": "x"}',
+                     '{"release": true, "version": 8}', '{"release": true, "version": null}'):
+            core.home("state", "app.json").write_text(body)
+            self.assertEqual(self.signal(), [], body)
+        self.app()
+        with mock.patch.object(updates, "last_look", side_effect=KeyError("ts")):
+            self.assertEqual(self.signal(), [])
+
+    def test_a_look_can_clear_what_the_signal_is_reading(self):
+        self.addCleanup(updates.unrecorded.clear)
+        updates.unrecorded.update(ts=time.time(), latest=self.NEWER)
+        with mock.patch.object(core, "cache_get", side_effect=lambda *a, **kw: updates.unrecorded.clear()):
+            self.assertEqual(updates.last_look()["latest"], self.NEWER)
+
+    def test_only_plain_digits_reach_the_banner(self):
+        self.app()
+        for version in ("٠.٩.٠", "١.٠", "9" * 5000, "0.9.0\n", "0.9.0 and then some words", "0.9.0.1.2"):
+            self.looked(version=version)
+            self.assertIsNone(core.version_tuple(version), version)
+            self.assertEqual(self.signal(), [], version)
+        self.assertEqual(core.version_tuple("0.8.1"), (0, 8, 1))
+
+    def test_pulse_never_notifies_about_it(self):
+        from cos import clean, daemon, feeds, status
+        self.app()
+        self.looked()
+        signals = [{"level": level, "msg": msg} for level, msg in status.signals(self.VITALS)]
+        self.assertTrue(any("is out" in s["msg"] for s in signals), signals)
+        s = dict(self.VITALS, signals=signals)
+        with mock.patch.object(status, "collect", return_value=s), mock.patch.object(status, "refresh_backup"), \
+                mock.patch.object(status, "record_trend"), mock.patch.object(feeds, "refresh"), \
+                mock.patch.object(daemon, "pulse_catch_up"), mock.patch.object(updates, "check"), \
+                mock.patch.object(clean, "scan"), mock.patch.object(core, "notify") as notify:
+            daemon.pulse()
+        notify.assert_not_called()
 
 
 class TestDownloadsDontEvolve(TempHome):
