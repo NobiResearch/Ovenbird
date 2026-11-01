@@ -548,8 +548,9 @@ class TestNewerApp(TempHome):
             s = updates.check_app()
         self.assertEqual(s["items"][0]["latest"], "0.9.0")
         self.assertEqual(s["items"][0]["url"], "https://github.com/NobiResearch/Ovenbird/releases/tag/v0.9.0")
-        with mock.patch.object(core, "http_get", side_effect=AssertionError("asked twice in a day")):
+        with mock.patch.object(core, "http_get") as asked:
             self.assertEqual(updates.check_app()["items"][0]["latest"], "0.9.0")
+        asked.assert_not_called()
 
     def test_the_same_or_older_or_odd_releases_say_nothing(self):
         self.app()
@@ -563,8 +564,9 @@ class TestNewerApp(TempHome):
         self.app()
         with mock.patch.object(core, "http_get", side_effect=OSError("offline")):
             self.assertEqual(updates.check_app()["items"], [])
-        with mock.patch.object(core, "http_get", side_effect=AssertionError("asked again")):
+        with mock.patch.object(core, "http_get") as asked:
             self.assertEqual(updates.check_app()["items"], [])
+        asked.assert_not_called()
 
     def test_a_failed_look_keeps_what_the_last_one_found(self):
         self.app()
@@ -588,14 +590,51 @@ class TestNewerApp(TempHome):
                 t.join()
         self.assertEqual(asked.call_count, 1)
 
-    def test_a_look_is_due_once_a_day_whatever_the_answer(self):
+    def test_a_look_the_cache_cant_keep_still_counts(self):
+        """A full disk: without this the desktop's polls would ask GitHub every minute."""
         self.app()
-        self.assertTrue(updates.look_due())
-        with mock.patch.object(core, "http_get", side_effect=OSError("offline")):
-            updates.latest_release()
-        self.assertFalse(updates.look_due())
+        self.addCleanup(updates.unrecorded.clear)
+        with self.release():
+            updates.check_app()
         self.yesterday()
-        self.assertTrue(updates.look_due())
+        with mock.patch.object(core, "save_json", side_effect=OSError("disk full")), \
+                mock.patch.object(core, "http_get", side_effect=OSError("offline")) as asked:
+            for _ in range(3):
+                self.assertEqual(updates.latest_release()["version"], "0.9.0")
+        self.assertEqual(asked.call_count, 1)
+        updates.unrecorded["ts"] -= updates.LOOK_EVERY + 1
+        with self.release(tag="v0.9.1", url="https://github.com/NobiResearch/Ovenbird/releases/tag/v0.9.1"):
+            self.assertEqual(updates.latest_release()["version"], "0.9.1")
+        self.assertEqual(updates.unrecorded, {})  # the cache has it again, and goes on from there
+
+    def test_a_damaged_record_counts_as_no_look(self):
+        self.app()
+        now = time.time()
+        for body in ("[1]", '"x"', "{", '{"ts": "x", "data": {"latest": null}}', '{"ts": null, "data": {}}',
+                     '{"data": {"latest": null}}', '{"ts": %f}' % now, '{"ts": %f, "data": "x"}' % now,
+                     '{"ts": %f, "data": {}}' % now, '{"ts": %f, "data": {"latest": "x"}}' % now,
+                     '{"ts": %f, "data": {"latest": {"version": "0.9.0", "url": "https://evil.example/"}}}' % now):
+            core.home("cache", "app-release.json").write_text(body)
+            with self.release() as asked:
+                self.assertEqual(updates.check_app()["items"][0]["latest"], "0.9.0", body)
+            asked.assert_called_once()
+            self.assertEqual(updates.last_look()["latest"]["version"], "0.9.0", body)
+
+    def test_a_failed_look_doesnt_carry_damage_along(self):
+        self.app()
+        core.cache_put("app-release", {"latest": "x"}, ts=1000.0)
+        with mock.patch.object(core, "http_get", side_effect=OSError("offline")):
+            self.assertEqual(updates.check_app()["items"], [])
+        self.assertIsNone(core.cache_get("app-release")["data"]["latest"])
+
+    def test_damaged_results_stay_as_they_are(self):
+        self.app()
+        with self.release():
+            updates.check_app()
+        for data in ({}, "x", {"sources": [1]}, {"sources": {"brew": {}}}):
+            core.cache_put("updates", data, ts=1000.0)
+            updates.fold_app()
+            self.assertEqual(core.cache_get("updates"), {"ts": 1000.0, "data": data})
 
     def test_the_look_joins_old_results_without_freshening_them(self):
         self.app()
@@ -608,14 +647,24 @@ class TestNewerApp(TempHome):
         self.assertEqual(blob["data"]["sources"]["app"]["items"][0]["latest"], "0.9.0")
         self.assertEqual(blob["data"]["sources"]["brew"]["items"], [{"name": "git"}])
 
+    def test_a_poll_writes_only_when_the_line_changes(self):
+        self.app()
+        self.results()
+        with self.release():
+            updates.fold_app()
+        with mock.patch.object(core, "cache_put") as put:
+            updates.fold_app()
+        put.assert_not_called()
+
     def test_the_line_leaves_with_the_new_app(self):
         self.app()
         self.results()
         with self.release():
             updates.fold_app()
         self.app(version="0.9.0")
-        with mock.patch.object(core, "http_get", side_effect=AssertionError("asked twice in a day")):
+        with mock.patch.object(core, "http_get") as asked:
             updates.fold_app()
+        asked.assert_not_called()
         blob = core.cache_get("updates")
         self.assertEqual((blob["data"]["total"], blob["data"]["sources"]["app"]["items"]), (1, []))
 
@@ -629,10 +678,10 @@ class TestNewerApp(TempHome):
     def test_an_app_someone_built_never_asks(self):
         self.app(release=False)
         self.results()
-        with mock.patch.object(core, "http_get", side_effect=AssertionError("asked GitHub")):
+        with mock.patch.object(core, "http_get") as asked:
             self.assertIsNone(updates.check_app())
-            self.assertFalse(updates.look_due())
             updates.fold_app()
+        asked.assert_not_called()
         self.assertNotIn("app", core.cache_get("updates")["data"]["sources"])
 
     def test_code_newer_than_its_app_says_download(self):

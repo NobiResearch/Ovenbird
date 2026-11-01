@@ -478,7 +478,7 @@ def make_handler(app):
         from . import status, updates
         s = status.collect()
         core.cache_put("status", s)
-        if app.managed and updates.look_due():  # beside the poll: a slow network doesn't hold the desktop up
+        if app.managed:  # beside the poll: a slow network doesn't hold it up
             threading.Thread(target=updates.fold_app, daemon=True).start()
         h._json(dict(s, claude_os=code_state(app), new_here=core.new_here(), downloaded=core.downloaded()))
 

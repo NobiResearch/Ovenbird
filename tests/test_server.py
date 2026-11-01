@@ -591,9 +591,17 @@ class TestTheDaysLook(TempHome):
         collect = mock.patch("cos.status.collect", return_value={"signals": []})
         collect.start()
         self.addCleanup(collect.stop)
+        self.addCleanup(updates.unrecorded.clear)
+        self.threads = threading.active_count()
 
     def downloaded(self, release):
         core.save_json(core.home("state", "app.json"), {"release": release, "version": "0.8.0"})
+
+    def settle(self):
+        """Wait for the looks the polls started."""
+        deadline = time.time() + 5
+        while threading.active_count() > self.threads and time.time() < deadline:
+            time.sleep(0.01)
 
     def get(self, path):
         conn = local_connection(self.socket)
@@ -618,25 +626,77 @@ class TestTheDaysLook(TempHome):
         self.assertEqual((blob["ts"], blob["data"]["total"]), (1000.0, 1))
         self.assertEqual(blob["data"]["sources"]["app"], {"items": [], "error": None})
 
-    def test_the_status_poll_looks_once_a_day_beside_the_window(self):
-        ran = threading.Event()
-        with mock.patch.object(updates, "fold_app", side_effect=ran.set) as fold:
+    def test_the_status_poll_doesnt_wait_for_the_look(self):
+        finish, done = threading.Event(), threading.Event()
+
+        def look():
+            finish.wait(5)
+            done.set()
+        with mock.patch.object(updates, "fold_app", side_effect=look):
             self.assertEqual(self.get("/api/status")[0], 200)
-            self.assertTrue(ran.wait(5))
-            core.cache_put("app-release", {"latest": None})
-            self.assertEqual(self.get("/api/status")[0], 200)
-        self.assertEqual(fold.call_count, 1)
+            self.assertFalse(done.is_set())
+            finish.set()
+            self.assertTrue(done.wait(5))
+
+    def test_the_status_poll_asks_once_a_day(self):
+        with mock.patch.object(core, "http_get", side_effect=OSError("offline")) as asked:
+            for _ in range(3):
+                self.assertEqual(self.get("/api/status")[0], 200)
+            self.settle()
+        self.assertEqual(asked.call_count, 1)
+
+    def test_the_status_poll_asks_once_a_day_on_a_full_disk(self):
+        with mock.patch.object(core, "save_json", side_effect=OSError("disk full")), \
+                mock.patch.object(core, "http_get", side_effect=OSError("offline")) as asked:
+            for _ in range(3):
+                self.assertEqual(self.get("/api/status")[0], 200)
+            self.settle()
+        self.assertEqual(asked.call_count, 1)
+
+    def test_the_count_follows_the_app_on_the_next_poll(self):
+        core.cache_put("app-release", {"latest": self.NEWER})  # today's look is done: only the app changes
+        with mock.patch.object(core, "http_get") as asked:
+            self.get("/api/status")
+            self.settle()
+            self.assertEqual(core.cache_get("updates")["data"]["total"], 2)
+            core.save_json(core.home("state", "app.json"), {"release": True, "version": "0.9.0"})
+            self.get("/api/status")
+            self.settle()
+        asked.assert_not_called()
+        self.assertEqual(core.cache_get("updates")["data"]["total"], 1)
+
+    def test_a_damaged_record_of_the_look_changes_nothing_on_screen(self):
+        for body in ("[1]", '"x"', "{", '{"ts": "x", "data": {}}', '{"ts": null}', '{"ts": 1, "data": {"latest": "x"}}'):
+            core.home("cache", "app-release.json").write_text(body)
+            with mock.patch.object(core, "http_get", side_effect=OSError("offline")):
+                self.assertEqual(self.get("/api/status")[0], 200, body)
+                self.settle()
+                self.assertEqual(self.get("/api/updates")[0], 200, body)
+            self.assertIsNone(core.load_json(core.home("cache", "app-release.json"))["data"]["latest"], body)
+
+    def test_damaged_results_are_served_or_checked_again(self):
+        core.cache_put("app-release", {"latest": self.NEWER})
+        fresh = {"sources": {}, "total": 0, "fetched": False, "missing_tools": []}
+        with mock.patch.object(updates, "check", return_value=fresh):
+            for body in ('{"ts": 1, "data": {}}', '{"ts": 1, "data": "x"}', '{"ts": 1, "data": {"sources": [1]}}',
+                         '{"ts": "x", "data": {}}', "[1]", "{"):
+                core.home("cache", "updates.json").write_text(body)
+                self.assertEqual(self.get("/api/status")[0], 200, body)
+                self.settle()
+                self.assertEqual(self.get("/api/updates")[0], 200, body)
 
     def test_a_server_the_app_didnt_start_never_looks(self):
         self.app.managed = False  # `cos serve`, on a Mac where a downloaded app once ran
         with mock.patch.object(updates, "fold_app") as fold:
             self.assertEqual(self.get("/api/status")[0], 200)
             self.assertEqual(self.get("/api/updates")[0], 200)
+            self.settle()
         fold.assert_not_called()
 
     def test_an_app_someone_built_never_asks(self):
         self.downloaded(False)
-        with mock.patch.object(core, "http_get", side_effect=AssertionError("asked GitHub")) as asked:
+        with mock.patch.object(core, "http_get") as asked:
             self.assertEqual(self.get("/api/status")[0], 200)
             self.assertEqual(self.get("/api/updates")[0], 200)
+            self.settle()
         asked.assert_not_called()
