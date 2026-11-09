@@ -23,8 +23,9 @@ your human. Use it.
    asks. Another: with **Keep Ovenbird up to date** on, Ovenbird fast-forwards its own
    checkout to what's merged on GitHub, only where no old code is loaded (decision 0011).
 2. **Scan before you touch; leave a trace.** Prefer `cos` syscalls: they're read-only by
-   default, require `--yes` to mutate, and journal what they did. If you change the machine
-   any other way, record it: `bin/cos log add "what you did"`.
+   default, require `--yes` for `clean apply`, `update apply`, `security on` and
+   `evolve merge|discard`, and journal what they did. If you change the machine any other
+   way, record it: `bin/cos log add "what you did"`.
 3. **Private stays home.** This repository is **public**. Anything about the human (names,
    paths containing their username, music history, feeds, journal, memory) lives only in
    `~/.claude-os/`. Never write it into the repo. The Guardian's pre-commit and pre-push
@@ -41,10 +42,19 @@ your human. Use it.
 
 ## Syscalls
 
-Run as `bin/cos …` from the repo root (or `cos …` once installed). Add `--json` anywhere for
-structured output. Mutating commands (`clean apply`, `update apply`, `daemon install|uninstall|run`,
-`evolve merge|discard`, `security on`, `install`, `uninstall`) must be written in that order with options after,
-so the human's permission prompt sees them, and they refuse to run inside headless daemons.
+Run as `bin/cos …` from the repo root (or `cos …` once installed). Add `--json` for structured
+output: anywhere, except that a mutating command, `startup --full` and `net --speed` take it after
+their command words (a bare `app` means `app open`, so `app --json` is refused: write
+`app open --json`). Mutating commands
+(`clean apply`, `update apply`, `daemon install|uninstall|run`, `evolve merge|discard`,
+`security on`, `install`, `uninstall`, `app install|open`, `cal connect`, `weather set|clear`,
+`feeds add|mute`, `config <key> <value>`) must be written canonically, command words first with
+options after, so the human's permission prompt sees them (`check_mutation` in `lib/cos/cli.py`
+rejects any other order); so must `startup --full` and `net --speed`, which `main` checks the
+same way. Mutating commands refuse to run inside headless daemons, and so does anything a feed
+item could steer: music commands that play, change or rate, `remember`, `memory --forget`, `ask`,
+`serve`, `app build`, `startup --full`, `net --speed`, `backup setup`, `friction close`, `say`,
+`notify` and `log add`.
 `evolve merge|discard` show no prompt in a conversation (0013). Merge only after the human's
 yes there or a guardian agent's review of the branch; one that changes the safety files gets
 that review either way, then `--reviewed` (0020). Discard only on the human's yes.
@@ -58,7 +68,7 @@ that review either way, then `--reviewed` (0020). Discard only on the human's ye
 | `power` | what keeps the Mac or display awake: processes holding PreventUserIdleSystemSleep, PreventUserIdleDisplaySleep or PreventSystemSleep, and how long (read-only) |
 | `clean [--deep]` | reclaimable space by target, with safety level; `clean apply <id>… --yes` |
 | `update [--fetch]` | macOS, Homebrew, npm, mas, rustup, and Ovenbird itself (what's merged on GitHub and not here); `update apply <source> [names] --yes` |
-| `music now\|play <q>\|pause\|resume\|next\|prev\|vol N\|find <q>\|catalog <q>\|playlists\|playlist <name> [--shuffle]\|radio [<q>]\|like\|history\|setup` | Apple Music (songs and playlists play inside Ovenbird when "Apple Music in Ovenbird" is on) |
+| `music now\|play <q>\|pause\|resume\|toggle\|stop\|next\|prev\|vol N\|shuffle on/off\|find <q>\|catalog <q>\|playlists\|playlist <name> [--shuffle]\|radio [<q>]\|like\|unlike\|history\|setup` | Apple Music (songs and playlists play inside Ovenbird when "Apple Music in Ovenbird" is on) |
 | `feeds [--since H] [--category C] [--all] [--mark-read]` | unread headlines; `feeds list\|add <url>\|mute <url>\|mark-read` |
 | `weather` · `weather set "<city>"` · `weather clear` | forecast + alerts for the place the human chose (off until they do) |
 | `cal [--refresh]` · `cal connect` | today's events and due reminders (read-only; off until connected) |
